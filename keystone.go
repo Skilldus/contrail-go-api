@@ -24,6 +24,7 @@ type KeystoneClient struct {
 	osUsername   string
 	osPassword   string
 	osAdminToken string
+	osDomainName string
 	current      *KeystoneToken
 	httpClient   *http.Client
 	tokenID      string
@@ -59,20 +60,21 @@ type KeystoneTokenv3 struct {
 }
 
 // NewKeystoneClient allocates and initializes a KeystoneClient
-func NewKeystoneClient(auth_url, tenant_name, username, password, token string) *KeystoneClient {
+func NewKeystoneClient(auth_url, tenant_name, username, password, token, domain_name string) *KeystoneClient {
 	return &KeystoneClient{
 		osAuthURL:    auth_url,
 		osTenantName: tenant_name,
 		osUsername:   username,
 		osPassword:   password,
 		osAdminToken: token,
+		osDomainName: domain_name,
 		current:      nil,
 		httpClient:   &http.Client{},
 	}
 }
 
 // NewKeepaliveKeystoneClient allocates and initializes a KeepaliveKeystoneClient
-func NewKeepaliveKeystoneClient(auth_url, tenant_name, username, password, token string) *KeepaliveKeystoneClient {
+func NewKeepaliveKeystoneClient(auth_url, tenant_name, username, password, token, domain_name string) *KeepaliveKeystoneClient {
 	return &KeepaliveKeystoneClient{
 		KeystoneClient{
 			osAuthURL:    auth_url,
@@ -80,6 +82,7 @@ func NewKeepaliveKeystoneClient(auth_url, tenant_name, username, password, token
 			osUsername:   username,
 			osPassword:   password,
 			osAdminToken: token,
+			osDomainName: domain_name,
 			current:      nil,
 			httpClient:   &http.Client{},
 		},
@@ -122,7 +125,7 @@ func (kClient *KeystoneClient) AuthenticateV3() error {
 	request := AuthCredentialsRequestv3{}
 	request.Auth.Identity.Password.User.Name = kClient.osUsername
 	request.Auth.Identity.Password.User.Password = kClient.osPassword
-	request.Auth.Identity.Password.User.Domain.ID = "default"
+	request.Auth.Identity.Password.User.Domain.ID = kClient.osDomainName //"default"
 	request.Auth.Identity.Methods = append(request.Auth.Identity.Methods, "password")
 	request.Auth.Scope.System.All = true
 	if data, err = json.Marshal(&request); err != nil {
