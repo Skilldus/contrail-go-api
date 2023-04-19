@@ -19,18 +19,20 @@ import (
 // KeystoneClient is a client of the OpenStack Keystone service that adds authentication
 // tokens to the Contrail API requests.
 type KeystoneClient struct {
-	osAuthURL    string
-	osTenantName string
-	osUsername   string
-	osPassword   string
-	osAdminToken string
-	osDomainName string
-	current      *KeystoneToken
-	httpClient   *http.Client
-	tokenID      string
-	isv3Client   bool
-	issuedAt     string
-	expiresAt    string
+	osAuthURL           string
+	osTenantName        string
+	osUsername          string
+	osPassword          string
+	osAdminToken        string
+	osDomainName        string
+	osProjectName       string
+	osProjectDomainName string
+	current             *KeystoneToken
+	httpClient          *http.Client
+	tokenID             string
+	isv3Client          bool
+	issuedAt            string
+	expiresAt           string
 }
 
 // KeepaliveKeystoneClient embeds KeystoneClient
@@ -60,16 +62,18 @@ type KeystoneTokenv3 struct {
 }
 
 // NewKeystoneClient allocates and initializes a KeystoneClient
-func NewKeystoneClient(auth_url, tenant_name, username, password, token, domain_name string) *KeystoneClient {
+func NewKeystoneClient(auth_url, tenant_name, username, password, token, domain_name, project_name, project_domain_name string) *KeystoneClient {
 	return &KeystoneClient{
-		osAuthURL:    auth_url,
-		osTenantName: tenant_name,
-		osUsername:   username,
-		osPassword:   password,
-		osAdminToken: token,
-		osDomainName: domain_name,
-		current:      nil,
-		httpClient:   &http.Client{},
+		osAuthURL:           auth_url,
+		osTenantName:        tenant_name,
+		osUsername:          username,
+		osPassword:          password,
+		osAdminToken:        token,
+		osDomainName:        domain_name,
+		osProjectName:       project_name,
+		osProjectDomainName: project_domain_name,
+		current:             nil,
+		httpClient:          &http.Client{},
 	}
 }
 
@@ -99,7 +103,7 @@ func (kClient *KeystoneClient) AuthenticateV3() error {
 				Password struct {
 					User struct {
 						Domain struct {
-							ID string `json:"id"`
+							Name string `json:"name"`
 						} `json:"domain"`
 						Name     string `json:"name"`
 						Password string `json:"password"`
@@ -107,9 +111,12 @@ func (kClient *KeystoneClient) AuthenticateV3() error {
 				} `json:"password"`
 			} `json:"identity"`
 			Scope struct {
-				System struct {
-					All bool `json:"all"`
-				} `json:"system"`
+				Project struct {
+					Name   string `json:"name"`
+					Domain struct {
+						Name string `json:"name"`
+					} `json:"domain"`
+				} `json:"project"`
 			} `json:"scope"`
 		} `json:"auth"`
 	}
@@ -118,19 +125,24 @@ func (kClient *KeystoneClient) AuthenticateV3() error {
 	if url[len(url)-1] != '/' {
 		url += "/"
 	}
-	url += "tokens"
+	url += "v3/auth/tokens"
 
 	var data []byte
 	var err error
 	request := AuthCredentialsRequestv3{}
 	request.Auth.Identity.Password.User.Name = kClient.osUsername
 	request.Auth.Identity.Password.User.Password = kClient.osPassword
-	request.Auth.Identity.Password.User.Domain.ID = kClient.osDomainName //"default"
+	request.Auth.Identity.Password.User.Domain.Name = kClient.osDomainName
 	request.Auth.Identity.Methods = append(request.Auth.Identity.Methods, "password")
-	request.Auth.Scope.System.All = true
+	request.Auth.Scope.Project.Name = kClient.osProjectName
+	request.Auth.Scope.Project.Domain.Name = kClient.osProjectDomainName
+
 	if data, err = json.Marshal(&request); err != nil {
 		return err
 	}
+
+	// Encryption for insecure access only here
+	kClient.AddEncryption("", "", "", true)
 
 	resp, err := kClient.httpClient.Post(url, "application/json",
 		bytes.NewReader(data))
@@ -151,6 +163,7 @@ func (kClient *KeystoneClient) AuthenticateV3() error {
 
 	var response KeystoneTokenv3
 	err = json.Unmarshal(body, &response)
+
 	if err != nil {
 		return err
 	}
@@ -306,9 +319,9 @@ func (kClient *KeystoneClient) AddEncryption(caFile string, keyFile string, cert
 		kClient.osAuthURL = strings.Replace(kClient.osAuthURL, "http", "https", 1)
 	}
 
-	tlsConfig := &tls.Config{}
+	customTransport := http.DefaultTransport.(*http.Transport).Clone()
 	if insecure {
-		tlsConfig.InsecureSkipVerify = true
+		customTransport.TLSClientConfig.InsecureSkipVerify = true
 	} else if caFile != "" {
 		caCert, err := ioutil.ReadFile(caFile)
 		if err != nil {
@@ -316,19 +329,16 @@ func (kClient *KeystoneClient) AddEncryption(caFile string, keyFile string, cert
 		}
 		caCertPool := x509.NewCertPool()
 		caCertPool.AppendCertsFromPEM(caCert)
-		tlsConfig.RootCAs = caCertPool
+		customTransport.TLSClientConfig.RootCAs = caCertPool
 		if certFile != "" && keyFile != "" {
 			cert, err := tls.LoadX509KeyPair(certFile, keyFile)
 			if err != nil {
 				return nil
 			}
-			tlsConfig.Certificates = []tls.Certificate{cert}
+			customTransport.TLSClientConfig.Certificates = []tls.Certificate{cert}
 		}
 	}
-	transport := &http.Transport{
-		TLSClientConfig: tlsConfig,
-	}
-	kClient.httpClient.Transport = transport
+	kClient.httpClient.Transport = customTransport
 
 	return nil
 }
